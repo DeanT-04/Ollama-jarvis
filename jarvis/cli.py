@@ -2,108 +2,43 @@
 """
 Jarvis CLI - A command-line interface for an AI assistant powered by Ollama.
 
-This script implements a basic CLI for interacting with an AI assistant named Jarvis.
+This script implements a CLI for interacting with an AI assistant named Jarvis.
 Jarvis can understand user requests, generate and execute code, and attempt to
 correct itself when code execution fails.
 
-SECURITY WARNING: This initial implementation executes code directly, which poses
+SECURITY WARNING: This implementation executes code directly, which poses
 significant security risks. Future versions will implement proper sandboxing.
 """
 
 import os
 import sys
-import json
-import subprocess
-import tempfile
-import requests
 from typing import Dict, List, Tuple, Optional, Any
-import re
-from dotenv import load_dotenv
-# Temporarily disable mem0 import
-# from mem0 import Memory as Mem0Memory
 
-# Import custom modules
-from perplexica_search import search_web, format_search_results, extract_search_query, is_search_request, get_available_focus_modes, get_focus_mode_description
-from workspace_utils import get_workspace_state, read_file, list_directory, format_directory_listing
-from ollama_client import OllamaClient, format_chat_history
-
-# Load environment variables
-load_dotenv()
-
-# Configuration
-WORKSPACE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "jarvis_workspace")
-OLLAMA_API_URL = os.getenv("OLLAMA_API_URL", "http://localhost:11434/api/generate")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3")  # Change to your preferred model
-MAX_RETRIES = int(os.getenv("MAX_RETRIES", "2"))
-
-# Ensure workspace directory exists
-os.makedirs(WORKSPACE_DIR, exist_ok=True)
-
-class Memory:
-    """Memory mechanism using mem0ai to store conversation history."""
-
-    def __init__(self):
-        self.history: List[Dict[str, Any]] = []
-        # Temporarily disable mem0
-        # self.mem0 = Mem0Memory()
-        self.user_id = "jarvis_user"
-
-    def add_user_message(self, message: str) -> None:
-        """Add a user message to the memory."""
-        msg = {
-            "role": "user",
-            "content": message
-        }
-        self.history.append(msg)
-        # Add to mem0 memory
-        # self.mem0.add([msg], user_id=self.user_id)
-
-    def add_assistant_message(self, message: str) -> None:
-        """Add an assistant message to the memory."""
-        msg = {
-            "role": "assistant",
-            "content": message
-        }
-        self.history.append(msg)
-        # Add to mem0 memory
-        # self.mem0.add([msg], user_id=self.user_id)
-
-    def add_execution_result(self, code: str, language: str, output: str, error: str, success: bool) -> None:
-        """Add an execution result to the memory."""
-        content = f"Code execution ({language}):\n{code}\nSuccess: {success}\nOutput: {output}\nError: {error}"
-        msg = {
-            "role": "system",
-            "content": content
-        }
-        self.history.append(msg)
-        # Add to mem0 memory as a system message
-        # self.mem0.add([msg], user_id=self.user_id)
-
-    def get_conversation_history(self) -> List[Dict[str, str]]:
-        """Get the conversation history in a format suitable for the Ollama API."""
-        # Filter out system messages for the conversation history
-        return [msg for msg in self.history if msg["role"] != "system"]
-
-    def get_full_history(self) -> List[Dict[str, str]]:
-        """Get the full history including system messages."""
-        return self.history
-
-    def search_memories(self, query: str, limit: int = 5) -> List[Dict[str, Any]]:
-        """Search for relevant memories based on the query."""
-        # Temporarily return empty results
-        # results = self.mem0.search(query=query, user_id=self.user_id, limit=limit)
-        # return results.get("results", [])
-        return []
-
+from jarvis.config import get_config
+from jarvis.core.memory import Memory
+from jarvis.core.ollama import OllamaClient, format_chat_history
+from jarvis.core.executor import execute_code
+from jarvis.tools.search import search_web, PerplexicaClient
+from jarvis.tools.workspace import get_workspace_state
+from jarvis.utils.parsing import extract_code_blocks, extract_search_query, extract_focus_mode, is_search_request
 
 def send_to_ollama(prompt: str, memory: Memory, system_prompt: Optional[str] = None) -> str:
-    """Send a prompt to the Ollama API and return the response."""
+    """Send a prompt to the Ollama API and return the response.
+    
+    Args:
+        prompt: The prompt to send to Ollama.
+        memory: The memory object.
+        system_prompt: The system prompt to use.
+        
+    Returns:
+        The response from Ollama.
+    """
     # Search for relevant memories
     relevant_memories = memory.search_memories(prompt, limit=3)
     memories_str = "\n".join([f"- {entry['memory']}" for entry in relevant_memories])
 
     # Get workspace state
-    workspace_state = get_workspace_state(WORKSPACE_DIR)
+    workspace_state = get_workspace_state()
 
     # Create default system prompt if none is provided
     if system_prompt is None:
@@ -271,99 +206,23 @@ Would you like me to provide more specific information about any of these aspect
             return f"I'll help you with: {prompt}\n\nWhat specific information or task would you like me to assist with?"
 
 
-def extract_code_blocks(text: str) -> List[Tuple[str, str]]:
-    """Extract code blocks from the text.
-
-    Returns a list of tuples (language, code).
-    """
-    pattern = r"```(\w+)\n(.*?)```"
-    matches = re.findall(pattern, text, re.DOTALL)
-    return matches
-
-
-def execute_bash(code: str) -> Tuple[str, str, int]:
-    """Execute a Bash command in the workspace directory.
-
-    Returns a tuple (stdout, stderr, return_code).
-    """
-    try:
-        # Create a temporary script file
-        with tempfile.NamedTemporaryFile(dir=WORKSPACE_DIR, suffix='.sh', delete=False) as f:
-            f.write(code.encode())
-            script_path = f.name
-
-        # Make the script executable
-        os.chmod(script_path, 0o755)
-
-        # Execute the script
-        if os.name == 'nt':  # Windows
-            # Use PowerShell to execute the script
-            process = subprocess.Popen(
-                ['powershell', '-Command', f"Get-Content '{script_path}' | powershell -"],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                cwd=WORKSPACE_DIR
-            )
-        else:  # Unix/Linux/Mac
-            process = subprocess.Popen(
-                ['/bin/bash', script_path],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                cwd=WORKSPACE_DIR
-            )
-
-        stdout, stderr = process.communicate()
-
-        # Clean up
-        os.unlink(script_path)
-
-        return stdout.decode(), stderr.decode(), process.returncode
-    except Exception as e:
-        return "", str(e), 1
-
-
-def execute_python(code: str) -> Tuple[str, str, int]:
-    """Execute a Python code snippet in the workspace directory.
-
-    Returns a tuple (stdout, stderr, return_code).
-    """
-    try:
-        # Create a temporary script file
-        with tempfile.NamedTemporaryFile(dir=WORKSPACE_DIR, suffix='.py', delete=False) as f:
-            f.write(code.encode())
-            script_path = f.name
-
-        # Execute the script
-        process = subprocess.Popen(
-            [sys.executable, script_path],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            cwd=WORKSPACE_DIR
-        )
-        stdout, stderr = process.communicate()
-
-        # Clean up
-        os.unlink(script_path)
-
-        return stdout.decode(), stderr.decode(), process.returncode
-    except Exception as e:
-        return "", str(e), 1
-
-
 def handle_code_execution(code: str, language: str, memory: Memory, retries: int = 0) -> Tuple[str, bool]:
     """Handle the execution of code and potential retries.
 
-    Returns a tuple (response_text, success).
+    Args:
+        code: The code to execute.
+        language: The language of the code.
+        memory: The memory object.
+        retries: The number of retries attempted so far.
+
+    Returns:
+        A tuple (response_text, success).
     """
+    max_retries = get_config("MAX_RETRIES", 2)
     print(f"\nExecuting {language} code...")
 
     # Execute the code
-    if language.lower() in ["bash", "shell", "sh"]:
-        stdout, stderr, return_code = execute_bash(code)
-    elif language.lower() in ["python", "py"]:
-        stdout, stderr, return_code = execute_python(code)
-    else:
-        return f"I don't know how to execute code in {language}.", False
+    stdout, stderr, return_code = execute_code(code, language)
 
     # Check if execution was successful
     if return_code == 0 and not stderr:
@@ -371,11 +230,11 @@ def handle_code_execution(code: str, language: str, memory: Memory, retries: int
         return f"Execution successful:\n\n{stdout}", True
 
     # If we've reached the maximum number of retries, give up
-    if retries >= MAX_RETRIES:
+    if retries >= max_retries:
         memory.add_execution_result(code, language, stdout, stderr, False)
-        return f"I've tried {MAX_RETRIES + 1} times, but I'm still encountering errors:\n\n{stderr}\n\nPlease provide more guidance.", False
+        return f"I've tried {max_retries + 1} times, but I'm still encountering errors:\n\n{stderr}\n\nPlease provide more guidance.", False
 
-    print(f"Execution failed. Analyzing error and retrying ({retries + 1}/{MAX_RETRIES})...")
+    print(f"Execution failed. Analyzing error and retrying ({retries + 1}/{max_retries})...")
 
     # Prepare a prompt for self-correction
     correction_prompt = f"""I tried to execute the following {language} code:
@@ -447,7 +306,7 @@ Based on these search results, please provide a corrected version of the code.""
     return f"I couldn't generate a corrected version of the code in {language}. Here's the error I encountered:\n\n{stderr}", False
 
 
-def handle_search_request(query: str, memory: Memory, focus_mode: str = None) -> str:
+def handle_search_request(query: str, memory: Memory, focus_mode: Optional[str] = None) -> str:
     """Handle a web search request.
 
     Args:
@@ -460,26 +319,18 @@ def handle_search_request(query: str, memory: Memory, focus_mode: str = None) ->
     """
     # Use the default focus mode if none is specified
     if focus_mode is None:
-        focus_mode = os.getenv("PERPLEXICA_FOCUS_MODE", "webSearch")
+        focus_mode = get_config("PERPLEXICA_FOCUS_MODE")
 
     print(f"\nSearching the web for: {query} (Focus Mode: {focus_mode})")
 
     try:
-        # Import the PerplexicaClient here to avoid circular imports
-        from perplexica_search import PerplexicaClient
-
         # Create a Perplexica client
         client = PerplexicaClient()
 
         # Perform the search
         search_results = client.search(
             query=query,
-            focus_mode=focus_mode,
-            chat_model_provider=os.getenv("PERPLEXICA_CHAT_MODEL_PROVIDER", "ollama"),
-            chat_model_name=os.getenv("PERPLEXICA_CHAT_MODEL_NAME", "llama3.2"),
-            embedding_model_provider=os.getenv("PERPLEXICA_EMBEDDING_MODEL_PROVIDER", "ollama"),
-            embedding_model_name=os.getenv("PERPLEXICA_EMBEDDING_MODEL_NAME", "llama3.2"),
-            optimization_mode=os.getenv("PERPLEXICA_OPTIMIZATION_MODE", "balanced")
+            focus_mode=focus_mode
         )
 
         if not search_results or "message" not in search_results:
@@ -532,10 +383,13 @@ Source: https://example.com/result3
 
 def main():
     """Main function to run the Jarvis CLI."""
+    workspace_dir = get_config("WORKSPACE_DIR")
+    ollama_model = get_config("OLLAMA_MODEL")
+    
     print("Jarvis CLI")
     print("==========")
-    print(f"Using Ollama model: {OLLAMA_MODEL}")
-    print(f"Workspace directory: {WORKSPACE_DIR}")
+    print(f"Using Ollama model: {ollama_model}")
+    print(f"Workspace directory: {workspace_dir}")
     print("Type 'exit' or 'quit' to end the session.")
     print()
 
@@ -561,14 +415,7 @@ def main():
             search_query = extract_search_query(response)
             if search_query:
                 # Extract focus mode from the query if specified
-                focus_mode = None
-                focus_mode_match = re.search(r"FOCUS_MODE:\s*([\w]+)", response)
-                if focus_mode_match:
-                    focus_mode = focus_mode_match.group(1)
-                    # Validate the focus mode
-                    if focus_mode not in get_available_focus_modes():
-                        print(f"\nInvalid focus mode: {focus_mode}. Using default focus mode.")
-                        focus_mode = None
+                focus_mode = extract_focus_mode(response)
 
                 # Handle the search request
                 search_results = handle_search_request(search_query, memory, focus_mode)

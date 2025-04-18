@@ -1,52 +1,39 @@
 #!/usr/bin/env python3
 """
-Perplexica search module for Jarvis CLI.
+Search module for Jarvis.
 
 This module provides functions for searching the web using Perplexica,
 an open-source AI-powered search engine.
 """
 
-import os
-import re
 import requests
 from typing import List, Dict, Any, Optional
-from dotenv import load_dotenv
 
-# Load environment variables
-load_dotenv()
-
-# Configuration
-PERPLEXICA_URL = os.getenv("PERPLEXICA_URL", "http://localhost:3000")
-PERPLEXICA_SEARCH_ENDPOINT = f"{PERPLEXICA_URL}/api/search"
-DEFAULT_CHAT_MODEL_PROVIDER = os.getenv("PERPLEXICA_CHAT_MODEL_PROVIDER", "ollama")
-DEFAULT_CHAT_MODEL_NAME = os.getenv("PERPLEXICA_CHAT_MODEL_NAME", "llama3")
-DEFAULT_EMBEDDING_MODEL_PROVIDER = os.getenv("PERPLEXICA_EMBEDDING_MODEL_PROVIDER", "ollama")
-DEFAULT_EMBEDDING_MODEL_NAME = os.getenv("PERPLEXICA_EMBEDDING_MODEL_NAME", "llama3")
-DEFAULT_FOCUS_MODE = os.getenv("PERPLEXICA_FOCUS_MODE", "webSearch")
-DEFAULT_OPTIMIZATION_MODE = os.getenv("PERPLEXICA_OPTIMIZATION_MODE", "balanced")
-
+from jarvis.config import get_config
+from jarvis.utils.parsing import extract_search_query, is_search_request, extract_focus_mode
 
 class PerplexicaClient:
     """Client for interacting with the Perplexica API."""
     
-    def __init__(self, base_url: str = PERPLEXICA_URL):
+    def __init__(self, base_url: Optional[str] = None):
         """Initialize the Perplexica client.
         
         Args:
             base_url: The base URL of the Perplexica API.
+                If not provided, the URL from the configuration will be used.
         """
-        self.base_url = base_url
-        self.search_endpoint = f"{base_url}/api/search"
+        self.base_url = base_url or get_config("PERPLEXICA_URL")
+        self.search_endpoint = f"{self.base_url}/api/search"
     
     def search(
         self,
         query: str,
-        focus_mode: str = DEFAULT_FOCUS_MODE,
-        chat_model_provider: str = DEFAULT_CHAT_MODEL_PROVIDER,
-        chat_model_name: str = DEFAULT_CHAT_MODEL_NAME,
-        embedding_model_provider: str = DEFAULT_EMBEDDING_MODEL_PROVIDER,
-        embedding_model_name: str = DEFAULT_EMBEDDING_MODEL_NAME,
-        optimization_mode: str = DEFAULT_OPTIMIZATION_MODE,
+        focus_mode: Optional[str] = None,
+        chat_model_provider: Optional[str] = None,
+        chat_model_name: Optional[str] = None,
+        embedding_model_provider: Optional[str] = None,
+        embedding_model_name: Optional[str] = None,
+        optimization_mode: Optional[str] = None,
         system_instructions: Optional[str] = None,
         history: Optional[List[List[str]]] = None,
         stream: bool = False
@@ -68,6 +55,14 @@ class PerplexicaClient:
         Returns:
             The search results.
         """
+        # Use default values from configuration if not provided
+        focus_mode = focus_mode or get_config("PERPLEXICA_FOCUS_MODE")
+        chat_model_provider = chat_model_provider or get_config("PERPLEXICA_CHAT_MODEL_PROVIDER")
+        chat_model_name = chat_model_name or get_config("PERPLEXICA_CHAT_MODEL_NAME")
+        embedding_model_provider = embedding_model_provider or get_config("PERPLEXICA_EMBEDDING_MODEL_PROVIDER")
+        embedding_model_name = embedding_model_name or get_config("PERPLEXICA_EMBEDDING_MODEL_NAME")
+        optimization_mode = optimization_mode or get_config("PERPLEXICA_OPTIMIZATION_MODE")
+        
         payload = {
             "chatModel": {
                 "provider": chat_model_provider,
@@ -146,42 +141,29 @@ class PerplexicaClient:
         return formatted_results
 
 
-def search_web(query: str, num_results: int = 3) -> List[Dict[str, Any]]:
-    """
-    Search the web using Perplexica and return the results.
+def search_web(query: str, focus_mode: Optional[str] = None, num_results: int = 3) -> Dict[str, Any]:
+    """Search the web using Perplexica and return the results.
     
     Args:
         query: The search query.
+        focus_mode: The focus mode to use.
         num_results: The number of results to return.
         
     Returns:
-        A list of dictionaries containing the search results.
+        The search results.
     """
     client = PerplexicaClient()
-    results = client.search(query)
+    results = client.search(query, focus_mode=focus_mode)
     
-    if "sources" not in results or not results["sources"]:
-        return []
+    # Limit the number of sources if needed
+    if "sources" in results and len(results["sources"]) > num_results:
+        results["sources"] = results["sources"][:num_results]
     
-    # Limit the number of sources to num_results
-    sources = results["sources"][:num_results]
-    
-    # Convert to the format expected by the existing code
-    formatted_sources = []
-    for source in sources:
-        formatted_source = {
-            "title": source.get("metadata", {}).get("title", "No title"),
-            "body": source.get("pageContent", "No content"),
-            "href": source.get("metadata", {}).get("url", "No URL")
-        }
-        formatted_sources.append(formatted_source)
-    
-    return formatted_sources
+    return results
 
 
-def format_search_results(results: List[Dict[str, Any]]) -> str:
-    """
-    Format the search results as a string.
+def format_search_results_legacy(results: List[Dict[str, Any]]) -> str:
+    """Format the search results as a string (legacy format).
     
     Args:
         results: The search results.
@@ -205,39 +187,8 @@ def format_search_results(results: List[Dict[str, Any]]) -> str:
     return formatted_results
 
 
-def extract_search_query(text: str) -> str:
-    """
-    Extract a search query from text.
-    
-    Args:
-        text: The text to extract the search query from.
-        
-    Returns:
-        The extracted search query, or an empty string if no query is found.
-    """
-    pattern = r"SEARCH_WEB:\s*\"([^\"]+)\""
-    match = re.search(pattern, text)
-    if match:
-        return match.group(1)
-    return ""
-
-
-def is_search_request(text: str) -> bool:
-    """
-    Check if the text contains a search request.
-    
-    Args:
-        text: The text to check.
-        
-    Returns:
-        True if the text contains a search request, False otherwise.
-    """
-    return "SEARCH_WEB:" in text
-
-
 def get_available_focus_modes() -> List[str]:
-    """
-    Get a list of available focus modes.
+    """Get a list of available focus modes.
     
     Returns:
         A list of available focus modes.
@@ -253,8 +204,7 @@ def get_available_focus_modes() -> List[str]:
 
 
 def get_focus_mode_description(focus_mode: str) -> str:
-    """
-    Get a description of a focus mode.
+    """Get a description of a focus mode.
     
     Args:
         focus_mode: The focus mode.
