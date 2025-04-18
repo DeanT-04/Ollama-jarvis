@@ -11,6 +11,7 @@ A command-line interface (CLI) for an AI assistant named Jarvis, powered by a lo
 - Retrieves relevant memories to provide context-aware responses
 - Workspace awareness: Jarvis knows the current state of its workspace
 - Web search capability: Jarvis can search the web for information when needed
+- MCP integration: Jarvis exposes tools and resources via the Model Context Protocol
 
 ## Setup
 
@@ -29,6 +30,12 @@ A command-line interface (CLI) for an AI assistant named Jarvis, powered by a lo
    ```
    python jarvis_cli.py
    ```
+
+5. (Optional) Run the Jarvis MCP server:
+   ```
+   python mcp_tools.py
+   ```
+   This will start an MCP server that exposes Jarvis tools and resources to LLM applications.
 
 ## Security Warning
 
