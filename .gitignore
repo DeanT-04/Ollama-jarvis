@@ -36,5 +36,6 @@ jarvis_workspace/*
 !jarvis_workspace/.gitkeep
 .env
 
-# Mem0 repository
+# External repositories
 mem0/
+python-sdk/

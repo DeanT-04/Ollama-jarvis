@@ -9,6 +9,8 @@ A command-line interface (CLI) for an AI assistant named Jarvis, powered by a lo
 - Self-corrects when code execution fails
 - Maintains conversation memory using mem0ai
 - Retrieves relevant memories to provide context-aware responses
+- Workspace awareness: Jarvis knows the current state of its workspace
+- Web search capability: Jarvis can search the web for information when needed
 
 ## Setup
 
