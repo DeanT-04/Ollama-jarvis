@@ -21,6 +21,10 @@ import re
 from dotenv import load_dotenv
 from mem0 import Memory as Mem0Memory
 
+# Import custom modules
+from web_search import search_web, format_search_results, extract_search_query, is_search_request
+from workspace_utils import get_workspace_state, read_file, list_directory, format_directory_listing
+
 # Load environment variables
 load_dotenv()
 
@@ -93,6 +97,9 @@ def send_to_ollama(prompt: str, memory: Memory, system_prompt: Optional[str] = N
     relevant_memories = memory.search_memories(prompt, limit=3)
     memories_str = "\n".join([f"- {entry['memory']}" for entry in relevant_memories])
 
+    # Get workspace state
+    workspace_state = get_workspace_state(WORKSPACE_DIR)
+
     if system_prompt is None:
         system_prompt = f"""You are Jarvis, an AI assistant operating within a dedicated workspace.
 Your goal is to help the user by generating Bash commands or Python code snippets.
@@ -100,6 +107,14 @@ If you need to run code, generate the complete code block needed for the immedia
 If you can answer directly without code, do so.
 Always output code clearly marked within markdown code blocks (e.g., ```bash ... ``` or ```python ... ```).
 Remember that all code you generate will be executed in a specific workspace directory.
+
+If you lack specific information (like the correct command-line arguments for a tool, current installation instructions for a package, or how to fix a specific error code), you should explicitly state your need for information and request a web search using the format:
+SEARCH_WEB: "your search query here"
+
+Current Workspace State:
+```
+{workspace_state}
+```
 
 Here are some relevant memories that might help you assist the user better:
 {memories_str}
@@ -154,12 +169,22 @@ def execute_bash(code: str) -> Tuple[str, str, int]:
         os.chmod(script_path, 0o755)
 
         # Execute the script
-        process = subprocess.Popen(
-            ['/bin/bash', script_path],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            cwd=WORKSPACE_DIR
-        )
+        if os.name == 'nt':  # Windows
+            # Use PowerShell to execute the script
+            process = subprocess.Popen(
+                ['powershell', '-Command', f"Get-Content '{script_path}' | powershell -"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                cwd=WORKSPACE_DIR
+            )
+        else:  # Unix/Linux/Mac
+            process = subprocess.Popen(
+                ['/bin/bash', script_path],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                cwd=WORKSPACE_DIR
+            )
+
         stdout, stderr = process.communicate()
 
         # Clean up
@@ -238,7 +263,9 @@ But I encountered this error:
 {stderr}
 ```
 
-Please analyze the error and provide a corrected version of the code."""
+Please analyze this error. Provide a corrected version of the code, or if you need more information to fix this, request a web search using the format:
+SEARCH_WEB: "your search query about the error"
+"""
 
     # Add the failed execution to memory
     memory.add_execution_result(code, language, stdout, stderr, False)
@@ -246,6 +273,37 @@ Please analyze the error and provide a corrected version of the code."""
     # Get a corrected version of the code
     correction_response = send_to_ollama(correction_prompt, memory)
     memory.add_assistant_message(correction_response)
+
+    # Check if the response contains a search request
+    search_query = extract_search_query(correction_response)
+    if search_query:
+        # Handle the search request
+        search_results = handle_search_request(search_query, memory)
+
+        # Create a new prompt with the search results
+        new_prompt = f"""I tried to execute the following {language} code:
+
+```{language}
+{code}
+```
+
+But I encountered this error:
+
+```
+{stderr}
+```
+
+You requested a web search for: {search_query}
+
+Here are the search results:
+
+{search_results}
+
+Based on these search results, please provide a corrected version of the code."""
+
+        # Get a new response from Ollama
+        correction_response = send_to_ollama(new_prompt, memory)
+        memory.add_assistant_message(correction_response)
 
     # Extract the corrected code
     corrected_code_blocks = extract_code_blocks(correction_response)
@@ -260,6 +318,33 @@ Please analyze the error and provide a corrected version of the code."""
             return handle_code_execution(corrected_code, corrected_language, memory, retries + 1)
 
     return f"I couldn't generate a corrected version of the code in {language}. Here's the error I encountered:\n\n{stderr}", False
+
+
+def handle_search_request(query: str, memory: Memory) -> str:
+    """Handle a web search request.
+
+    Args:
+        query: The search query.
+        memory: The memory object.
+
+    Returns:
+        The search results as a formatted string.
+    """
+    print(f"\nSearching the web for: {query}")
+
+    # Perform the search
+    search_results = search_web(query)
+
+    if not search_results:
+        return "I couldn't find any relevant information. Please try a different search query."
+
+    # Format the results
+    formatted_results = format_search_results(search_results)
+
+    # Add the search results to memory
+    memory.add_execution_result(f"SEARCH_WEB: \"{query}\"", "web_search", formatted_results, "", True)
+
+    return formatted_results
 
 
 def main():
@@ -288,6 +373,26 @@ def main():
 
             # Send the user input to Ollama
             response = send_to_ollama(user_input, memory)
+
+            # Check if the response contains a search request
+            search_query = extract_search_query(response)
+            if search_query:
+                # Handle the search request
+                search_results = handle_search_request(search_query, memory)
+
+                # Create a new prompt with the search results
+                new_prompt = f"""I asked you about: {user_input}
+
+You requested a web search for: {search_query}
+
+Here are the search results:
+
+{search_results}
+
+Based on these search results, please provide a response to my original question."""
+
+                # Get a new response from Ollama
+                response = send_to_ollama(new_prompt, memory)
 
             # Add the response to memory
             memory.add_assistant_message(response)
