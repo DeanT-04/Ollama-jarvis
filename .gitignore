@@ -35,3 +35,6 @@ env/
 jarvis_workspace/*
 !jarvis_workspace/.gitkeep
 .env
+
+# Mem0 repository
+mem0/
