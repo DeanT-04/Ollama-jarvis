@@ -1,24 +1,28 @@
 #!/usr/bin/env python3
 """
-Workspace utilities for Jarvis CLI.
+Workspace utilities for Jarvis.
 
 This module provides functions for interacting with the Jarvis workspace.
 """
 
 import os
 import subprocess
-from typing import Tuple, List, Dict, Any
+from typing import Tuple, List, Dict, Any, Optional
 
-def get_workspace_state(workspace_dir: str) -> str:
-    """
-    Get the current state of the workspace.
-    
+from jarvis.config import get_config
+
+def get_workspace_state(workspace_dir: Optional[str] = None) -> str:
+    """Get the current state of the workspace.
+
     Args:
         workspace_dir: The path to the workspace directory.
-        
+            If not provided, the default workspace directory from the configuration will be used.
+
     Returns:
         A string containing the current state of the workspace.
     """
+    workspace_dir = workspace_dir or get_config("WORKSPACE_DIR")
+    
     try:
         # Run the ls -la command
         if os.name == 'nt':  # Windows
@@ -46,17 +50,20 @@ def get_workspace_state(workspace_dir: str) -> str:
     except Exception as e:
         return f"Error getting workspace state: {e}"
 
-def read_file(workspace_dir: str, file_path: str) -> Tuple[str, bool]:
-    """
-    Read the contents of a file in the workspace.
-    
+
+def read_file(file_path: str, workspace_dir: Optional[str] = None) -> Tuple[str, bool]:
+    """Read the contents of a file in the workspace.
+
     Args:
-        workspace_dir: The path to the workspace directory.
         file_path: The path to the file, relative to the workspace directory.
-        
+        workspace_dir: The path to the workspace directory.
+            If not provided, the default workspace directory from the configuration will be used.
+
     Returns:
         A tuple containing the file contents and a boolean indicating success.
     """
+    workspace_dir = workspace_dir or get_config("WORKSPACE_DIR")
+    
     try:
         full_path = os.path.join(workspace_dir, file_path)
         
@@ -76,17 +83,53 @@ def read_file(workspace_dir: str, file_path: str) -> Tuple[str, bool]:
     except Exception as e:
         return f"Error reading file {file_path}: {e}", False
 
-def list_directory(workspace_dir: str, dir_path: str = "") -> List[Dict[str, Any]]:
-    """
-    List the contents of a directory in the workspace.
-    
+
+def write_file(file_path: str, content: str, workspace_dir: Optional[str] = None) -> Tuple[str, bool]:
+    """Write content to a file in the workspace.
+
     Args:
+        file_path: The path to the file, relative to the workspace directory.
+        content: The content to write to the file.
         workspace_dir: The path to the workspace directory.
-        dir_path: The path to the directory, relative to the workspace directory.
+            If not provided, the default workspace directory from the configuration will be used.
+
+    Returns:
+        A tuple containing a message and a boolean indicating success.
+    """
+    workspace_dir = workspace_dir or get_config("WORKSPACE_DIR")
+    
+    try:
+        full_path = os.path.join(workspace_dir, file_path)
         
+        # Check if the file is within the workspace
+        if not os.path.abspath(full_path).startswith(os.path.abspath(workspace_dir)):
+            return f"File {file_path} is outside the workspace.", False
+        
+        # Create directories if they don't exist
+        os.makedirs(os.path.dirname(full_path), exist_ok=True)
+        
+        # Write the file
+        with open(full_path, 'w') as f:
+            f.write(content)
+        
+        return f"File {file_path} written successfully.", True
+    except Exception as e:
+        return f"Error writing file {file_path}: {e}", False
+
+
+def list_directory(dir_path: str = "", workspace_dir: Optional[str] = None) -> List[Dict[str, Any]]:
+    """List the contents of a directory in the workspace.
+
+    Args:
+        dir_path: The path to the directory, relative to the workspace directory.
+        workspace_dir: The path to the workspace directory.
+            If not provided, the default workspace directory from the configuration will be used.
+
     Returns:
         A list of dictionaries containing information about the directory contents.
     """
+    workspace_dir = workspace_dir or get_config("WORKSPACE_DIR")
+    
     try:
         full_path = os.path.join(workspace_dir, dir_path)
         
@@ -115,13 +158,13 @@ def list_directory(workspace_dir: str, dir_path: str = "") -> List[Dict[str, Any
         print(f"Error listing directory {dir_path}: {e}")
         return []
 
+
 def format_directory_listing(items: List[Dict[str, Any]]) -> str:
-    """
-    Format a directory listing as a string.
-    
+    """Format a directory listing as a string.
+
     Args:
         items: A list of dictionaries containing information about the directory contents.
-        
+
     Returns:
         A formatted string containing the directory listing.
     """

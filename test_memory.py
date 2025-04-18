@@ -1,45 +1,43 @@
 #!/usr/bin/env python3
 """
-Test script for the mem0ai integration in Jarvis CLI.
-
-This script tests the basic functionality of the mem0ai integration,
-including adding and retrieving memories.
+Test script for the memory system.
 """
 
 import os
-from dotenv import load_dotenv
-from mem0 import Memory
+from jarvis.core.memory import Memory
 
-# Load environment variables
-load_dotenv()
+# Set the OpenAI API key for Mem0
+os.environ["OPENAI_API_KEY"] = os.environ.get("MEM0_API_KEY", "")
 
 def main():
-    """Main function to test the mem0ai integration."""
-    print("Testing mem0ai integration...")
-    
-    # Initialize memory
+    """Test the memory system."""
+    # Initialize the memory system
     memory = Memory()
-    user_id = "test_user"
-    
-    # Add some test messages
-    print("Adding test messages...")
-    memory.add([{"role": "user", "content": "What's the weather like today?"}], user_id=user_id)
-    memory.add([{"role": "assistant", "content": "I don't have real-time weather data, but I can help you find that information."}], user_id=user_id)
-    memory.add([{"role": "user", "content": "What's my favorite color?"}], user_id=user_id)
-    memory.add([{"role": "assistant", "content": "I don't know your favorite color yet. Would you like to tell me?"}], user_id=user_id)
-    memory.add([{"role": "user", "content": "My favorite color is blue."}], user_id=user_id)
-    memory.add([{"role": "assistant", "content": "Thanks for letting me know! I'll remember that your favorite color is blue."}], user_id=user_id)
-    
+
+    # Add a test memory
+    memory.add_memory("This is a test memory")
+
+    # Add a user message
+    memory.add_user_message("Hello, Jarvis!")
+
+    # Add an assistant message
+    memory.add_assistant_message("Hello! How can I help you today?")
+
     # Search for memories
-    print("\nSearching for memories about favorite color...")
-    results = memory.search("What is my favorite color?", user_id=user_id, limit=3)
-    
+    results = memory.search_memories("test")
+
     # Print the results
-    print("\nRelevant memories:")
-    for i, result in enumerate(results.get("results", [])):
-        print(f"{i+1}. {result.get('memory', '')}")
-    
-    print("\nTest completed!")
+    print("Search results:")
+    for result in results:
+        print(f"- {result}")
+
+    # Get the conversation history
+    history = memory.get_conversation_history()
+
+    # Print the history
+    print("\nConversation history:")
+    for msg in history:
+        print(f"- {msg['role']}: {msg['content']}")
 
 if __name__ == "__main__":
     main()

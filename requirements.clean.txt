@@ -5,4 +5,3 @@ ollama>=0.3.3
 beautifulsoup4>=4.12.3
 lxml>=5.2.0
 mcp[cli]>=1.6.0
-# Perplexica dependencies will be installed from the Perplexica repository
